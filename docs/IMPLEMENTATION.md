@@ -1,9 +1,16 @@
-# unkrypt-x-ops 実装指示書
+# x-post-gen 実装指示書(原本)
 
 > 作成日: 2026-04-20
 > 対象: Claude Code でこのリポジトリを実装する際の完全仕様
-> プロジェクト名: unkrypt-x-ops
+> プロジェクト名: x-post-gen (原本では unkrypt-x-ops として記載)
 > 目的: X (旧Twitter) のビジネスアカウント運用を支援する Claude Code スキル群
+
+> ⚠️ **注意**: このファイルは初期仕様書です。以下の点は実装時に変更されました:
+> - Web 調査 API: **Perplexity Sonar Pro → Tavily Search API** に置換(コスト削減と無料枠活用のため)
+> - プロジェクト名: unkrypt-x-ops → **x-post-gen**(GitHub リポジトリ名に合わせた)
+> - ポスト/引用ツイート生成数: 1 件 → **5 件(ユーザー選択式)**
+>
+> 現行のアーキテクチャは `docs/architecture.md` を参照してください。
 
 ---
 

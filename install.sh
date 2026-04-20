@@ -217,7 +217,7 @@ cat <<EOF
 1) API キーを設定
    \$EDITOR .env
    - TWITTERAPI_IO_KEY  … https://twitterapi.io/dashboard
-   - PERPLEXITY_API_KEY … https://www.perplexity.ai/settings/api
+   - TAVILY_API_KEY     … https://app.tavily.com/home
 
 2) lean-canvas.md を配置(まだなら)
    cp $TARGET_DIR/_x-shared/examples/lean-canvas-sample.md ./lean-canvas.md

@@ -22,7 +22,7 @@
 │   history.py             ↔ ./.x-history/*.jsonl                      │
 │   deduplicator.py        (simhash 重複判定)                          │
 │   flame_check.py         ← rules/flame_rules.yaml                    │
-│   search_perplexity.py   ──▶ Perplexity Sonar Pro API                │
+│   search_tavily.py       ──▶ Tavily Search API                       │
 │   search_twitterapi.py   ──▶ TwitterAPI.io                           │
 │   utils.py               (共通: env, 時刻, ID)                       │
 └──────────────────────────────────────────────────────────────────────┘
@@ -64,7 +64,7 @@ lean-canvas.md ──┐
                       < 選ばれたトピック >
                                        │
                                        ▼
-                         search_perplexity.py ── { answer, citations }
+                         search_tavily.py ── { answer, citations }
                                        │
                                        ▼
               Claude Code が 5 バリエーション生成
@@ -96,7 +96,7 @@ lean-canvas.md ──────┐
               候補 ~60〜90 件
                      │
                      ▼
-       search_perplexity.py (背景補強 1 回)
+       search_tavily.py (背景補強 1 回)
                      │
                      ▼
     Claude Code がスコアリング → Top 5 選定
@@ -122,11 +122,19 @@ lean-canvas.md ──────┐
 - プロンプトを `prompts/*.md` に置けば、Claude 自身が読み込んで文脈に応じて調整できる
 - 原稿の品質はモデルの能力に依存するので、Claude の最新版をそのまま使うのが合理的
 
-### なぜ検索は外部 API (Perplexity / TwitterAPI.io) に切り分けたか
+### なぜ Web 検索に Tavily を選んだか
 
-- **決定的なデータ取得** は Python スクリプトの得意領域
-- citations・ツイート ID 等の構造化データを安定して取得するには専用 API が必要
-- Claude Code セッションからは離れた場所で、バッチ的に呼べる
+- **無料枠(月 1,000 リクエスト)** があり、本ツールの月 12 回程度の利用規模では **実質無料**
+- `include_domains` / `exclude_domains` でドメインフィルタ可能
+- `time_range` で鮮度制御(day / week / month / year)
+- `include_answer=True` で LLM 要約 answer も取得できる(Perplexity 相当の挙動)
+- `search_depth="advanced"` で高品質な結果を取得
+
+### なぜ X 内検索は TwitterAPI.io なのか
+
+- 公式 X API は月額高額($100〜)で、個人事業主にはオーバースペック
+- TwitterAPI.io は $0.15/1,000 ツイートの従量課金で、月数百ツイート取得でも数十円レベル
+- 公式ではないため規約変更リスクはあるが、クライアントは抽象化しやすく書いてある
 
 ### 投稿機能を意図的に外す理由
 
@@ -137,7 +145,7 @@ lean-canvas.md ──────┐
 
 | ポイント | 現状 | 拡張方法 |
 |---|---|---|
-| Web 検索エンジン | Perplexity 固定 | `search_perplexity.py` と同じインターフェースで `search_websearch.py` を追加 |
+| Web 検索エンジン | Tavily 固定 | `search_tavily.py` と同じインターフェースで `search_websearch.py` や `search_perplexity.py` を追加して SKILL.md の呼び出しを切り替え |
 | X 検索エンジン | TwitterAPI.io 固定 | `search_twitterapi.py` を抽象化して切り替え可能に |
 | 炎上ルール | `flame_rules.yaml` | YAML 編集のみで追加・変更可能 |
 | プロンプト | `prompts/*.md` | テキスト編集でトーン変更 |

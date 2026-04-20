@@ -35,24 +35,31 @@ cp .claude/skills/_x-shared/examples/lean-canvas-sample.md ./lean-canvas.md
 $EDITOR ./lean-canvas.md
 ```
 
-### `PERPLEXITY_API_KEY が設定されていません`
+### `TAVILY_API_KEY が設定されていません`
 
 ```bash
-echo 'PERPLEXITY_API_KEY=pplx-xxxx' >> .env
+echo 'TAVILY_API_KEY=tvly-xxxx' >> .env
 # .env が .gitignore 済みであることを確認
 grep -q '^\.env$' .gitignore || echo '.env' >> .gitignore
 ```
 
 ### `TWITTERAPI_IO_KEY が設定されていません`
 
-Perplexity と同様、`.env` に追記してください。
+Tavily と同様、`.env` に追記してください。
 `/x-post` のみ使う場合は TwitterAPI.io キーは不要です。
 
-### Perplexity API が `401` で失敗
+### Tavily API が `401 Unauthorized` で失敗
 
 - キーが空 or 誤り
 - キーの前後の空白を含めていないか確認
-- `https://www.perplexity.ai/settings/api` でキーを再発行
+- `https://app.tavily.com/home` でキーを再発行
+
+### Tavily API が `429 Rate Limit` / `Usage limit reached`
+
+- 無料枠(月 1,000 req)を超過している可能性
+- https://app.tavily.com/home で使用量を確認
+- 必要なら `search_depth=basic` に変更(credit 消費半減)
+- あるいは Researcher プランへアップグレード
 
 ### TwitterAPI.io が `429 Rate Limit`
 
@@ -120,7 +127,7 @@ mv .x-history .x-history.bak
 ### コストが想定より高い
 
 `docs/api-costs.md` の「コストを左右する変数」セクションを参照。
-Perplexity の `max_tokens` や TwitterAPI.io の `--max-results` を見直すと減ります。
+Tavily の `search_depth` (advanced→basic) や TwitterAPI.io の `--max-results` を見直すと減ります。
 
 ### 投稿後の効果測定をしたい
 

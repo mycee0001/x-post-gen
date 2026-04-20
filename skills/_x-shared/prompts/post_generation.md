@@ -13,7 +13,7 @@
 
 - lean-canvas.md の主要セクション (PROBLEM / UVP / SOLUTION / UNFAIR ADVANTAGE 等)
 - 選ばれたトピック (topic_tags から低頻度なもの)
-- Perplexity Sonar のリサーチ結果 (answer + citations)
+- Tavily Search のリサーチ結果 (answer + citations)
 - 過去30日の投稿履歴サマリ(使われたトピック・切り口)
 
 ## 制約
