@@ -71,8 +71,8 @@ OK()    { printf "\033[1;32m[OK]\033[0m %s\n" "$*"; }
 # ---- アンインストール ----------------------------------------------------
 
 if [[ "$MODE_UNINSTALL" -eq 1 ]]; then
-  INFO "アンインストール: $TARGET_DIR 配下の x-post / x-quote / _x-shared を削除します"
-  rm -rf "$TARGET_DIR/x-post" "$TARGET_DIR/x-quote" "$TARGET_DIR/_x-shared"
+  INFO "アンインストール: $TARGET_DIR 配下の x-post / x-quote / x-reply / _x-shared を削除します"
+  rm -rf "$TARGET_DIR/x-post" "$TARGET_DIR/x-quote" "$TARGET_DIR/x-reply" "$TARGET_DIR/_x-shared"
   OK "アンインストール完了"
   WARN ".env と .x-history/ はそのままです。必要なら手動で削除してください"
   exit 0
@@ -124,7 +124,7 @@ fi
 INFO "スキルを配置: $TARGET_DIR"
 mkdir -p "$TARGET_DIR"
 
-for sub in x-post x-quote _x-shared; do
+for sub in x-post x-quote x-reply _x-shared; do
   src="$TMP_DIR/skills/$sub"
   dst="$TARGET_DIR/$sub"
   if [[ ! -d "$src" ]]; then
@@ -225,6 +225,7 @@ cat <<EOF
 3) Claude Code を起動し、以下のスラッシュコマンドを実行
    /x-post    — 新規ポスト 5 候補を生成
    /x-quote   — 引用ツイート 5 候補を生成
+   /x-reply   — リアルタイム関連ポストへのリプライ 5 候補を生成
 
 インストール先: $TARGET_DIR
 

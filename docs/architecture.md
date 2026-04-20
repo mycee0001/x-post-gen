@@ -6,7 +6,7 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │                          Claude Code セッション                        │
 │                                                                      │
-│   /x-post / /x-quote                                                 │
+│   /x-post / /x-quote / /x-reply                                                 │
 │      │                                                               │
 │      ▼                                                               │
 │   SKILL.md (フロー定義)                                               │
@@ -79,6 +79,42 @@ lean-canvas.md ──┐
                                        │
                                        ▼
                  採用分だけ history.py append
+```
+
+## データフロー: /x-reply
+
+**リアルタイム性重視**。`/x-quote` と似ているが、検索パラメータと履歴管理が異なる。
+
+```
+lean-canvas.md ──┐
+                 ▼
+     topic_tags から 3 クエリを組み立て
+                 │
+                 ▼
+  search_twitterapi.py
+    (hours_back=12, min_likes=2, queryType=Latest, max_results=20)
+                 │
+                 ▼
+       候補 ~50〜60 件 (最新順・未バズも拾う)
+                 │
+                 ▼
+   Claude がスコアリング:
+     関連性 × 新鮮度 × 会話参加性 (エンゲージメントは重み小)
+     BLOCK は除外、同一アカウント上位 2 件まで
+                 │
+                 ▼
+          Top 5 選定
+                 │
+                 ▼
+  5 候補それぞれにリプライ原稿を生成 (Claude)
+     ペルソナ: 発信者ではなく対話者
+                 │
+                 ▼
+         flame_check
+     (BLOCK は再生成 / 候補差し替え)
+                 │
+                 ▼
+   ユーザーに提示 (履歴追記なし)
 ```
 
 ## データフロー: /x-quote
