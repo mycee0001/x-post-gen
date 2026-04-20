@@ -201,11 +201,18 @@ def search_tweets(
     language: str = "ja",
     hours_back: int = 72,
     min_likes: int = 5,
+    exclude_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """X 内ツイートを検索して共通スキーマに正規化して返す。"""
+    """X 内ツイートを検索して共通スキーマに正規化して返す。
+
+    Args:
+        exclude_ids: 除外するツイート ID のセット。
+                     他スキルで使用済みの ID を渡すことで重複を防ぐ。
+    """
     q = _build_query(query, language=language, hours_back=hours_back, min_likes=min_likes)
     results: list[dict[str, Any]] = []
     cursor: str | None = None
+    _exclude = exclude_ids or set()
 
     while len(results) < max_results:
         resp = _request(q, cursor=cursor)
@@ -215,6 +222,8 @@ def search_tweets(
         for t in tweets:
             norm = _normalize_tweet(t)
             if norm:
+                if norm["tweet_id"] in _exclude:
+                    continue
                 results.append(norm)
             if len(results) >= max_results:
                 break
@@ -236,14 +245,24 @@ def search_tweets(
 def multi_search(
     queries: list[str],
     max_results_per_query: int = 30,
+    exclude_ids: set[str] | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
-    """複数クエリで検索して重複排除。"""
-    seen: set[str] = set()
+    """複数クエリで検索して重複排除。
+
+    Args:
+        exclude_ids: 除外するツイート ID のセット。
+    """
+    seen: set[str] = set(exclude_ids or set())
     combined: list[dict[str, Any]] = []
     for q in queries:
         try:
-            items = search_tweets(q, max_results=max_results_per_query, **kwargs)
+            items = search_tweets(
+                q,
+                max_results=max_results_per_query,
+                exclude_ids=seen,
+                **kwargs,
+            )
         except TwitterAPIError as e:
             print(f"WARN: query={q!r} でエラー: {e}", file=sys.stderr)
             continue
@@ -262,7 +281,19 @@ def main() -> int:
     parser.add_argument("--language", default="ja")
     parser.add_argument("--hours-back", type=int, default=72)
     parser.add_argument("--min-likes", type=int, default=5)
+    parser.add_argument(
+        "--exclude-ids-json",
+        default=None,
+        help='除外するツイートIDのJSON配列 (例: \'["123","456"]\')',
+    )
     args = parser.parse_args()
+
+    exclude_ids: set[str] | None = None
+    if args.exclude_ids_json:
+        try:
+            exclude_ids = set(json.loads(args.exclude_ids_json))
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"WARN: --exclude-ids-json のパース失敗: {e}", file=sys.stderr)
 
     try:
         results = search_tweets(
@@ -271,6 +302,7 @@ def main() -> int:
             language=args.language,
             hours_back=args.hours_back,
             min_likes=args.min_likes,
+            exclude_ids=exclude_ids,
         )
     except TwitterAPIError as e:
         print(f"ERROR: {e}", file=sys.stderr)

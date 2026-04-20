@@ -42,7 +42,15 @@ python3 .claude/skills/_x-shared/scripts/lean_canvas_loader.py --path ./lean-can
 
 - 無ければエラーメッセージで停止
 
-### Step 2: TwitterAPI.io でリアルタイムに関連ポストを検索
+### Step 2: 使用済みツイート ID を取得 + TwitterAPI.io でリアルタイムに関連ポストを検索
+
+まず他スキル(x-quote)で使用済みのツイート ID を取得して除外リストにする:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/used_tweets.py load --hours-back 48
+```
+
+返り値の JSON 配列を `<除外ID JSON>` として検索に渡す。
 
 lean-canvas.md の `topic_tags` から **3 クエリ** を組み立てる。例:
 
@@ -58,11 +66,13 @@ python3 .claude/skills/_x-shared/scripts/search_twitterapi.py \
   --language ja \
   --hours-back 12 \
   --min-likes 2 \
-  --max-results 20
+  --max-results 20 \
+  --exclude-ids-json '<除外ID JSON>'
 ```
 
 - `--hours-back 12`(必要なら 6 に短縮)で **直近ツイートのみ**
 - `--min-likes 2` で新鮮ポスト(likes がまだついていない)も拾う
+- `--exclude-ids-json` で **x-quote で使用済みのツイートを除外**
 - 3 クエリ × 20 件 ≒ 60 件を取得、重複除去
 
 **重要:** `search_twitterapi.py` は内部で `queryType=Latest` をデフォルトで使用するため、
@@ -153,9 +163,21 @@ python3 .claude/skills/_x-shared/scripts/flame_check.py --text "<リプライ本
 (このスキルは履歴を残しません。同じポストに後日リプライしても問題ありません)
 ```
 
-### Step 9: 完了(履歴追記なし)
+### Step 9: 使用済みツイート ID を記録 + 完了
 
-履歴管理は行わない。ユーザーは気に入った候補を選んで手動でリプライする。
+**リプライの履歴管理(quotes.jsonl 的なもの)は行わない** が、
+候補として提示した 5 件のツイート ID は **使用済みステートに記録する**:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/used_tweets.py record \
+  --skill reply \
+  --tweet-ids-json '["<tweet_id_1>", "<tweet_id_2>", ..., "<tweet_id_5>"]'
+```
+
+これにより、同じタイミングや近いタイミングで `/x-quote` を実行しても、
+ここで候補に挙がったツイートは除外される。
+
+ユーザーは気に入った候補を選んで手動でリプライする。
 
 ## エラーハンドリング
 
