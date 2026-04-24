@@ -168,6 +168,25 @@ python3 .claude/skills/_x-shared/scripts/deduplicator.py check-quote \
 - ユーザーが別の話題やスキルを実行しようとした場合でも、まずこの採用確認を完了させる
 - 回答を受け取ったら即座に Step 10 に進む
 
+### Step 9.5: 採用候補をブラウザで表示
+
+ユーザーが採用番号を回答したら、**採用された候補のみ** を `present_results.py` でブラウザ表示する。
+これにより、引用元 URL のクリック遷移とコメント原稿のコピーが容易になる。
+
+```bash
+python3 .claude/skills/_x-shared/scripts/present_results.py \
+  --kind quote \
+  --json '<採用候補の JSON 配列>'
+```
+
+JSON 配列の各要素:
+```json
+{"number": 1, "url": "https://x.com/...", "author": "@handle", "source_text": "引用元80字", "comment_text": "コメント本文", "flame": "SAFE"}
+```
+
+- ブラウザで一時 HTML が開き、各候補に **Copy ボタン** と **Open in X リンク** が表示される
+- 一時ファイルは `/tmp` に作成されるため、手動削除は不要
+
 ### Step 10: 採用指示を受けて履歴に追記 + 使用済みツイート ID を記録
 
 ```bash

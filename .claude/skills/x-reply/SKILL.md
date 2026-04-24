@@ -185,6 +185,25 @@ python3 .claude/skills/_x-shared/scripts/flame_check.py --text "<リプライ本
 - 回答を受け取ったら即座に Step 9 に進む
 - リプライは履歴を残さないため、採用確認は **使用済みツイート ID の記録タイミング** として機能する
 
+### Step 8.5: 採用候補をブラウザで表示
+
+ユーザーが採用番号を回答したら、**採用された候補のみ** を `present_results.py` でブラウザ表示する。
+これにより、リプライ先 URL のクリック遷移とリプライ原稿のコピーが容易になる。
+
+```bash
+python3 .claude/skills/_x-shared/scripts/present_results.py \
+  --kind reply \
+  --json '<採用候補の JSON 配列>'
+```
+
+JSON 配列の各要素:
+```json
+{"number": 1, "url": "https://x.com/...", "author": "@handle", "source_text": "引用元80字", "reply_text": "リプライ本文", "flame": "SAFE"}
+```
+
+- ブラウザで一時 HTML が開き、各候補に **Copy ボタン** と **Open in X リンク** が表示される
+- 一時ファイルは `/tmp` に作成されるため、手動削除は不要
+
 ### Step 9: 使用済みツイート ID を記録 + 完了
 
 **リプライの履歴管理(quotes.jsonl 的なもの)は行わない** が、

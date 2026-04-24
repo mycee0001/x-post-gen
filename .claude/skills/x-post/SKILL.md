@@ -148,6 +148,25 @@ python3 .claude/skills/_x-shared/scripts/deduplicator.py check-post \
 - ユーザーが別の話題やスキルを実行しようとした場合でも、まずこの採用確認を完了させる
 - 回答を受け取ったら即座に Step 8 に進む
 
+### Step 7.5: 採用候補をブラウザで表示
+
+ユーザーが採用番号を回答したら、**採用された候補のみ** を `present_results.py` でブラウザ表示する。
+これにより、ポスト原稿のコピーが容易になる。
+
+```bash
+python3 .claude/skills/_x-shared/scripts/present_results.py \
+  --kind post \
+  --json '<採用候補の JSON 配列>'
+```
+
+JSON 配列の各要素:
+```json
+{"number": 1, "text": "ポスト本文", "angle": "一次情報ベース", "flame": "SAFE"}
+```
+
+- ブラウザで一時 HTML が開き、各候補に **Copy ボタン** が表示される
+- 一時ファイルは `/tmp` に作成されるため、手動削除は不要
+
 ### Step 8: ユーザーの採用指示を受けて履歴に追記
 
 ユーザーが「1,3」「all」「none」等を回答したら、それに応じて履歴追記:
