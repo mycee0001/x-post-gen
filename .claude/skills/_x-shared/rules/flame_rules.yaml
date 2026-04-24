@@ -1,0 +1,126 @@
+version: 1
+severity_levels: [SAFE, WARN, BLOCK]
+
+rules:
+  - id: competitor_naming_negative
+    severity: BLOCK
+    description: 競合製品・サービスの実名を伴う否定的表現
+    patterns:
+      - type: regex
+        pattern: "(DocuWorks|楽々Document|DX Suite|Tegaki|AI\\s*inside|DNP|Oracle|SAP|Salesforce|kintone|サイボウズ)[^\\n]{0,20}(使えない|ダメ|劣る|古い|不便|使い物にならない|時代遅れ|終わ(っ|り))"
+    examples_hit:
+      - "DocuWorksは使えない"
+      - "DX Suiteはもう時代遅れ"
+    examples_safe:
+      - "DocuWorksからの移行事例"
+      - "DX Suite との比較"
+
+  - id: discrimination
+    severity: BLOCK
+    description: 差別的・侮辱的表現
+    patterns:
+      - type: keyword
+        keywords:
+          - 無能
+          - 馬鹿
+          - バカ
+          - クズ
+          - ゴミ
+          - 老害
+          - 低能
+          - 知恵遅れ
+          - 底辺
+
+  - id: political_religious
+    severity: BLOCK
+    description: 政治・宗教に関する強い主張や党派性
+    patterns:
+      - type: keyword
+        keywords:
+          - 自民党
+          - 立憲民主
+          - 共産党
+          - 維新の会
+          - 国民民主
+          - 公明党
+          - れいわ新選組
+          - 統一教会
+          - 創価学会
+          - アベノミクス
+          - 岸田政権
+          - 石破政権
+
+  - id: customer_names
+    severity: BLOCK
+    description: PoC 顧客・取引先の実名を含む可能性(法人名 + 様)
+    patterns:
+      - type: regex
+        pattern: "(株式会社|有限会社|合同会社|㈱|(株))[\\w一-龯ァ-ヶー]{1,15}(様|さま)"
+
+  - id: medical_legal_unverified
+    severity: BLOCK
+    description: 根拠不明の医療・法律的主張
+    patterns:
+      - type: keyword
+        keywords:
+          - 診断できる
+          - 治癒する
+          - 治る
+          - 法的拘束力
+          - 合法化する
+          - 違法である
+          - 違法と断定
+
+  - id: discriminatory_attributes
+    severity: BLOCK
+    description: 属性を揶揄する表現(性別/人種/国籍等)
+    patterns:
+      - type: keyword
+        keywords:
+          - 女だから
+          - 男のくせに
+          - 外国人だから
+          - 日本人は皆
+          - オバサン
+          - ジジイ
+          - ババア
+
+  - id: absolute_claims
+    severity: WARN
+    description: 強すぎる断定表現
+    patterns:
+      - type: regex
+        pattern: "(必ず|絶対に|100%|100％|唯一|業界最高|業界No\\.?\\s*1|世界No\\.?\\s*1|日本一)"
+
+  - id: stats_without_source
+    severity: WARN
+    description: 数字を引用しているが出典URLがない
+    check: custom_function
+    custom_function: check_stats_have_source
+
+  - id: vague_exaggeration
+    severity: WARN
+    description: 誇張気味の表現
+    patterns:
+      - type: keyword
+        keywords:
+          - 革命的
+          - 画期的
+          - 世界初
+          - 前代未聞
+          - 業界初
+          - 究極の
+          - 完全無欠
+
+  - id: spammy_cta
+    severity: WARN
+    description: スパム感の強い CTA
+    patterns:
+      - type: regex
+        pattern: "(DM|DMください|今すぐ登録|今だけ無料|リポストお願い|フォロー返し)"
+
+  - id: emoji_overuse
+    severity: WARN
+    description: 絵文字の過剰使用(3 個超)
+    check: custom_function
+    custom_function: check_emoji_count
