@@ -132,10 +132,25 @@ def _normalize_tweet(t: dict[str, Any]) -> dict[str, Any] | None:
         )
         author_id = str(author.get("id") or author.get("rest_id") or "")
         author_name = author.get("name") or ""
+        author_followers = _to_int(
+            author.get("followers")
+            or author.get("followers_count")
+            or author.get("followersCount")
+            or 0
+        )
+        author_verified = bool(
+            author.get("isVerified")
+            or author.get("verified")
+            or author.get("isBlueVerified")
+            or author.get("is_blue_verified")
+            or False
+        )
     else:
         author_handle = ""
         author_id = ""
         author_name = ""
+        author_followers = 0
+        author_verified = False
 
     text = t.get("text") or t.get("full_text") or ""
     posted_at = (
@@ -164,6 +179,8 @@ def _normalize_tweet(t: dict[str, Any]) -> dict[str, Any] | None:
         "author_handle": author_handle,
         "author_id": author_id,
         "author_name": author_name,
+        "author_followers_count": author_followers,
+        "author_verified": author_verified,
         "text": text,
         "posted_at": posted_at,
         "like_count": like_count,
@@ -202,29 +219,44 @@ def search_tweets(
     hours_back: int = 72,
     min_likes: int = 5,
     exclude_ids: set[str] | None = None,
+    min_author_followers: int = 0,
+    max_replies: int | None = None,
 ) -> list[dict[str, Any]]:
     """X 内ツイートを検索して共通スキーマに正規化して返す。
 
     Args:
         exclude_ids: 除外するツイート ID のセット。
                      他スキルで使用済みの ID を渡すことで重複を防ぐ。
+        min_author_followers: 著者フォロワー数の最低値。0 ならフィルタなし。
+                              X 検索構文に follower 条件は無いため、取得後に除外する。
+        max_replies: ツイートの返信数の上限。None ならフィルタなし。
+                     メガバイラル(自分のリプが埋もれる投稿)を除外するために使う。
     """
     q = _build_query(query, language=language, hours_back=hours_back, min_likes=min_likes)
     results: list[dict[str, Any]] = []
     cursor: str | None = None
     _exclude = exclude_ids or set()
+    # 取得後フィルタを行うので、ページングを多めに回せるように上限を設ける
+    max_pages = max(5, (max_results // 20) + 5)
+    page = 0
 
-    while len(results) < max_results:
+    while len(results) < max_results and page < max_pages:
         resp = _request(q, cursor=cursor)
+        page += 1
         tweets = _extract_tweets(resp)
         if not tweets:
             break
         for t in tweets:
             norm = _normalize_tweet(t)
-            if norm:
-                if norm["tweet_id"] in _exclude:
-                    continue
-                results.append(norm)
+            if not norm:
+                continue
+            if norm["tweet_id"] in _exclude:
+                continue
+            if min_author_followers > 0 and norm["author_followers_count"] < min_author_followers:
+                continue
+            if max_replies is not None and norm["reply_count"] > max_replies:
+                continue
+            results.append(norm)
             if len(results) >= max_results:
                 break
         cursor = (
@@ -286,6 +318,18 @@ def main() -> int:
         default=None,
         help='除外するツイートIDのJSON配列 (例: \'["123","456"]\')',
     )
+    parser.add_argument(
+        "--min-author-followers",
+        type=int,
+        default=0,
+        help="著者フォロワー数の最低値。0 ならフィルタなし。取得後に除外する",
+    )
+    parser.add_argument(
+        "--max-replies",
+        type=int,
+        default=None,
+        help="ツイートの返信数上限。メガバイラル除外用。指定なしならフィルタなし",
+    )
     args = parser.parse_args()
 
     exclude_ids: set[str] | None = None
@@ -303,6 +347,8 @@ def main() -> int:
             hours_back=args.hours_back,
             min_likes=args.min_likes,
             exclude_ids=exclude_ids,
+            min_author_followers=args.min_author_followers,
+            max_replies=args.max_replies,
         )
     except TwitterAPIError as e:
         print(f"ERROR: {e}", file=sys.stderr)

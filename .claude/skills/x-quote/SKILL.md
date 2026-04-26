@@ -57,19 +57,23 @@ python3 .claude/skills/_x-shared/scripts/search_twitterapi.py \
   --query "<クエリ>" \
   --language ja \
   --hours-back 24 \
-  --min-likes 10 \
+  --min-likes 20 \
+  --min-author-followers 1000 \
+  --max-replies 300 \
   --max-results 30 \
   --exclude-ids-json '<除外ID JSON>'
 ```
 
 - `--hours-back 24`(72h から短縮。ただし普遍的な内容を狙うため、24h 以内で十分バズっているものを対象)
-- `--min-likes 10`(高エンゲージメントに絞る。5 から引き上げ)
+- `--min-likes 20`(高エンゲージメントに絞る。10 → 20 に引き上げ、ノイズを更に削減)
+- **`--min-author-followers 1000`** で著者リーチを担保(中堅以上のアカウント)
+- **`--max-replies 300`** でメガバイラル除外(自分の引用が埋もれる投稿を回避)
 - `--exclude-ids-json` に Step 2 で取得した使用済み ID を渡す
 - 3 クエリで合計 ~90 件 → 重複除去後ひと山に
 - API キー不正 / ネットワーク障害は明示的に伝える
-- 結果が少なすぎる場合は `--min-likes 5` に下げて再検索
+- 結果が少なすぎる場合は **Step 3.5 (サブカテフォールバック)** に進む (フィルタを緩めるより質を保つ方を優先)
 
-### Step 3.5: 主要クエリのヒット数が少ない場合のサブカテゴリフォールバック
+### Step 3.5: 第 1 段階フォールバック (サブカテゴリ 3 個)
 
 **3 クエリの結果を重複除去した後、ユニークツイート数 < 5 の場合のみ実行する。**
 ユニーク数 ≥ 5 ならこの Step はスキップして Step 4 へ進む。
@@ -105,14 +109,51 @@ python3 .claude/skills/_x-shared/scripts/subcategory_generator.py save \
 #### 3.5-c: サブカテゴリの各クエリで追加検索
 
 各サブカテゴリの `queries` を `search_twitterapi.py` に渡して追加検索する。
-**API クレジット節約のため `--max-results 10` に縮小する。** その他オプション
-(`--hours-back 24` / `--min-likes 10` / `--exclude-ids-json`) は Step 3 と同じ。
+**API クレジット節約のため `--max-results 10` に縮小する。** リーチフィルタは Step 3 と同じ値を使う。
+
+```bash
+python3 .claude/skills/_x-shared/scripts/search_twitterapi.py \
+  --query "<subcategory.queries[i]>" \
+  --language ja \
+  --hours-back 24 \
+  --min-likes 20 \
+  --min-author-followers 1000 \
+  --max-replies 300 \
+  --max-results 10 \
+  --exclude-ids-json '<除外ID JSON>'
+```
 
 3 サブカテゴリ × 1〜2 クエリ ≒ 30〜60 件を追加で取得し、Step 3 の主要結果とマージ (重複除去)。
 
 **重要:** マージ時、各候補に **由来フラグ** を付ける。
 - `origin: "main"` (Step 3 由来) → スコアそのまま
 - `origin: "subcategory"` (Step 3.5-c 由来) → Step 5 のスコアリング時に **関連性スコア × 0.7** を適用
+
+### Step 3.6: 第 2 段階フォールバック (サブカテゴリ追加 3 個)
+
+Step 3.5 完了後、リーチフィルタ通過後のユニークツイート数が **依然として < 5** の場合のみ実行する。
+
+`subcategory_generation.md` の **「第 2 段階」セクション** に従い、Claude が **既存 3 個と異なる** サブカテゴリを **追加 3 個** 生成する。
+
+```bash
+python3 .claude/skills/_x-shared/scripts/subcategory_generator.py append \
+  --canvas-hash <canvas.content_hash> \
+  --subcategories-json '<追加 3 個の JSON>'
+```
+
+その後、追加 3 サブカテゴリのクエリで Step 3.5-c と同じパラメータで検索し、結果をマージ (`origin: "subcategory"` のまま)。
+
+**この段階でも < 5 件なら Step 3.7 (フィルタ緩和) に進む。**
+
+### Step 3.7: 最終手段 — フィルタ緩和
+
+Step 3.5 / 3.6 後も < 5 件の場合のみ、**最後の手段** として以下のフィルタを段階的に緩める:
+
+1. `--min-likes 20` → `10`
+2. それでも 5 件未満なら `--min-author-followers 1000` → `500`
+
+これらは質を犠牲にするため最終手段とする。
+ここまで来ても 0 件なら、ユーザーに lean-canvas のトピックタグ見直しを促す。
 
 ### Step 4: Tavily Search で背景補強 (1 回のみ)
 
@@ -130,12 +171,26 @@ python3 .claude/skills/_x-shared/scripts/search_tavily.py \
 
 | 項目 | 重み | 計算 |
 |---|---|---|
-| **関連性** | 0.35 | lean-canvas.md のキートピックとの一致度 (0-1)。**`origin == "subcategory"` の候補は最後に × 0.7** |
-| **エンゲージメント** | 0.40 | `min(like_count / 100, 1.0)` 等の正規化。バズっているポストを優先 |
+| **関連性** | 0.30 | lean-canvas.md のキートピックとの一致度 (0-1)。**`origin == "subcategory"` の候補は最後に × 0.7** |
+| **リーチ** (新規) | 0.45 | 下記 3 サブシグナルの加重平均。**従来のエンゲージメント (0.40) を置換・拡張** |
 | **炎上リスク(負)** | 0.15 | 本文を flame_check にかけて BLOCK=-1, WARN=-0.5, SAFE=0 |
 | **重複ペナルティ(負)** | 0.10 | 過去 30 日に同じアカウントを引用済みなら -1、同一 tweet_id は -∞ |
 
 BLOCK のツイートは除外。Top 5 を選ぶ。
+
+#### リーチ Score の計算
+
+```
+reach = 0.45 × author_reach
+      + 0.35 × engagement_velocity
+      + 0.20 × conversation_activity
+```
+
+- `author_reach`: フォロワー数を**ベル型** (1k〜50k がピーク 1.0)。1k 未満は線形減点、50k 超は対数減衰 (大物アカは引用が埋もれる)
+- `engagement_velocity`: `like_count / max(hours_since_post, 0.5)` を `min(velocity / 30, 1.0)` で正規化 (1 時間あたり 30 like で 1.0、引用は速度の閾値を reply より高めに)
+- `conversation_activity`: `reply_count` が 5〜30 で 1.0、0 で 0.3、50+ で 0.5
+
+※ 認証済み (`author_verified`) の候補は最後に **+0.05** ボーナス (アルゴリズムブースト考慮)。
 
 ### Step 6: 5 候補それぞれにコメント原稿を生成
 
@@ -286,8 +341,8 @@ python3 .claude/skills/_x-shared/scripts/used_tweets.py record \
 | `lean-canvas.md` が無い | エラーメッセージで停止 |
 | `TWITTERAPI_IO_KEY` が空 | .env 設定を促して停止 |
 | `TAVILY_API_KEY` が空 | 同上(Tavily スキップで続けるか確認) |
-| 主要クエリのユニーク取得が 5 件未満 | **Step 3.5 (サブカテゴリフォールバック)** を実行。それでも 5 件未満なら以下のクエリ緩和へ |
-| サブカテゴリフォールバック後も 0 件 | クエリを緩めて再検索するか、ユーザーに確認 |
+| 主要クエリのユニーク取得が 5 件未満 | **Step 3.5 (第 1 段階サブカテ 3 個)** → **Step 3.6 (第 2 段階サブカテ追加 3 個 計 6 個)** → **Step 3.7 (フィルタ緩和)** の順にフォールバック |
+| サブカテゴリ生成が JSON 不正 | プロンプトを再読込して再生成 (最大 2 回)、それでも失敗ならスキップして次の Step へ |
 | スコアリング後 5 件未満 | 得られた分だけ提示、理由を明示 |
 | 全候補 BLOCK | クエリ変更を促して停止 |
 | TwitterAPI.io が `402`(クレジット不足) | **それまでに成功したクエリの結果を使って候補生成を続行する**。1 件も取得できていない場合のみ停止し、クレジットリチャージを促す。途中で 402 になった旨をユーザーに明示する |

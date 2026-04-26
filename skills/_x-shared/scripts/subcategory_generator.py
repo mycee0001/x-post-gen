@@ -92,14 +92,7 @@ def load(canvas_hash: str, history_dir: str = "./.x-history") -> dict[str, Any] 
     return entry
 
 
-def save(
-    canvas_hash: str,
-    subcategories: list[dict[str, Any]],
-    history_dir: str = "./.x-history",
-) -> dict[str, Any]:
-    """サブカテゴリを保存する。同じ canvas_hash のエントリは上書き。"""
-    if not canvas_hash:
-        raise ValueError("canvas_hash が空です")
+def _validate_subcategories(subcategories: list[Any]) -> None:
     if not isinstance(subcategories, list) or not subcategories:
         raise ValueError("subcategories は非空のリストである必要があります")
     for i, sc in enumerate(subcategories):
@@ -116,12 +109,69 @@ def save(
                 f"subcategories[{i}].queries は非空のリストである必要があります"
             )
 
+
+def save(
+    canvas_hash: str,
+    subcategories: list[dict[str, Any]],
+    history_dir: str = "./.x-history",
+) -> dict[str, Any]:
+    """サブカテゴリを保存する。同じ canvas_hash のエントリは上書き。"""
+    if not canvas_hash:
+        raise ValueError("canvas_hash が空です")
+    _validate_subcategories(subcategories)
+
     path = _cache_path(history_dir)
     data = _read_all(path)
     entry = {
         "generated_at": now_jst_iso(),
         "canvas_hash": canvas_hash,
         "subcategories": subcategories,
+    }
+    data[canvas_hash] = entry
+    _write_all(path, data)
+    return entry
+
+
+def append(
+    canvas_hash: str,
+    subcategories: list[dict[str, Any]],
+    history_dir: str = "./.x-history",
+) -> dict[str, Any]:
+    """既存エントリにサブカテゴリを追加する。重複 name はスキップ。
+
+    第 2 段階フォールバックで「既存 3 個 + 追加 3 個 = 計 6 個」にするための操作。
+    既存エントリが無い場合は新規作成と同じ動作。
+    """
+    if not canvas_hash:
+        raise ValueError("canvas_hash が空です")
+    _validate_subcategories(subcategories)
+
+    path = _cache_path(history_dir)
+    data = _read_all(path)
+    existing = data.get(canvas_hash)
+
+    if existing is None:
+        merged = list(subcategories)
+    else:
+        if not isinstance(existing, dict):
+            raise RuntimeError(
+                f"canvas_hash={canvas_hash} の既存エントリが dict ではありません"
+            )
+        existing_subs = existing.get("subcategories")
+        if not isinstance(existing_subs, list):
+            existing_subs = []
+        seen_names = {sc.get("name") for sc in existing_subs if isinstance(sc, dict)}
+        merged = list(existing_subs)
+        for sc in subcategories:
+            if sc.get("name") in seen_names:
+                continue
+            merged.append(sc)
+            seen_names.add(sc.get("name"))
+
+    entry = {
+        "generated_at": now_jst_iso(),
+        "canvas_hash": canvas_hash,
+        "subcategories": merged,
     }
     data[canvas_hash] = entry
     _write_all(path, data)
@@ -155,7 +205,7 @@ def main() -> int:
     p_load.add_argument("--canvas-hash", required=True)
     p_load.add_argument("--history-dir", default="./.x-history")
 
-    p_save = sub.add_parser("save", help="サブカテゴリを保存")
+    p_save = sub.add_parser("save", help="サブカテゴリを保存 (上書き)")
     p_save.add_argument("--canvas-hash", required=True)
     p_save.add_argument(
         "--subcategories-json",
@@ -163,6 +213,18 @@ def main() -> int:
         help='[{"name":"...","axis":"...","queries":["..."],"rationale":"..."}, ...]',
     )
     p_save.add_argument("--history-dir", default="./.x-history")
+
+    p_append = sub.add_parser(
+        "append",
+        help="既存エントリにサブカテゴリを追加 (第 2 段階フォールバック用)",
+    )
+    p_append.add_argument("--canvas-hash", required=True)
+    p_append.add_argument(
+        "--subcategories-json",
+        required=True,
+        help='追加する 3 個のサブカテゴリ JSON 配列',
+    )
+    p_append.add_argument("--history-dir", default="./.x-history")
 
     p_clear = sub.add_parser("clear", help="キャッシュを削除")
     p_clear.add_argument("--canvas-hash", help="省略すると全削除")
@@ -197,6 +259,24 @@ def main() -> int:
             print(
                 json.dumps(
                     {"ok": True, "saved_count": len(entry["subcategories"])},
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+
+        if args.cmd == "append":
+            try:
+                subcategories = json.loads(args.subcategories_json)
+            except json.JSONDecodeError as e:
+                print(
+                    f"ERROR: --subcategories-json が JSON ではない: {e}",
+                    file=sys.stderr,
+                )
+                return 2
+            entry = append(args.canvas_hash, subcategories, args.history_dir)
+            print(
+                json.dumps(
+                    {"ok": True, "total_count": len(entry["subcategories"])},
                     ensure_ascii=False,
                 )
             )

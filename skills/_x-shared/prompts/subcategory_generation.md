@@ -86,3 +86,42 @@ python3 .claude/skills/_x-shared/scripts/subcategory_generator.py save \
 ```
 
 これにより、同じ lean-canvas (content_hash 一致) では再生成不要となる。
+
+---
+
+## 第 2 段階: 既存サブカテゴリへの追加生成 (3 個 → 計 6 個)
+
+リーチフィルタ (著者フォロワー数・返信数上限) を通過した候補が依然として 5 件未満の
+場合に、第 2 段階としてサブカテゴリを **追加 3 個** 生成する。
+
+### 入力 (第 2 段階モード)
+
+通常の入力に加えて、**既存の 3 サブカテゴリ** が与えられる
+(キャッシュ `subcategories.json` に保存済みのもの)。
+
+### 制約 (第 2 段階モード)
+
+- 既存 3 個の `name` / `axis` / `queries` と **完全に異なる** 3 個を生成する
+  (キーワード重複も避ける)
+- 既存と同じ軸 (`axis`) を使ってよいが、視点 (角度) が違うこと
+  - 例: 既存に「上位概念=日本の製造業」がある → 新規は「上位概念=中小企業の生産性」など
+- `topic_tags` および既存サブカテゴリの `queries` の語と重複しないこと
+- 必ず **3 個ちょうど**
+
+### 出力 (第 2 段階モード)
+
+通常モードと同じ JSON 配列形式で **3 個だけ** 出力する。
+既存 3 個は含めない。マージは保存スクリプト側で自動的に行う。
+
+### 保存 (第 2 段階モード)
+
+`save` ではなく **`append`** を使う:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/subcategory_generator.py append \
+  --canvas-hash <canvas.content_hash> \
+  --subcategories-json '<新規 3 個の JSON 配列>'
+```
+
+`append` は既存エントリに追加し、name 重複は自動的にスキップされる。
+結果として `total_count` が 6 になる (既存 3 + 新規 3)。
