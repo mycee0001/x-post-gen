@@ -78,13 +78,67 @@ python3 .claude/skills/_x-shared/scripts/search_twitterapi.py \
 **重要:** `search_twitterapi.py` は内部で `queryType=Latest` をデフォルトで使用するため、
 **最新順** で返ってくる。スコアリング前の時点で既に新鮮。
 
+### Step 2.5: 主要クエリのヒット数が少ない場合のサブカテゴリフォールバック
+
+**3 クエリの結果を重複除去した後、ユニークツイート数 < 5 の場合のみ実行する。**
+ユニーク数 ≥ 5 ならこの Step はスキップして Step 3 へ進む。
+
+#### 2.5-a: サブカテゴリのキャッシュ確認
+
+```bash
+python3 .claude/skills/_x-shared/scripts/subcategory_generator.py load \
+  --canvas-hash <Step 1 で取得した canvas.content_hash>
+```
+
+返り値:
+- `{"hit": true, "entry": {...}}` → キャッシュあり。`entry.subcategories` を使って 2.5-c へ
+- `{"hit": false}` → キャッシュなし。2.5-b へ
+
+#### 2.5-b: Claude がサブカテゴリを生成 (キャッシュ miss 時のみ)
+
+`.claude/skills/_x-shared/prompts/subcategory_generation.md` を読み込み、
+そのプロンプトの指示通りに **Claude 自身が 3 個のサブカテゴリを生成** する。
+
+入力コンテキスト:
+- Step 1 の `canvas.sections` (problem / solution / customer_segments / channels / uvp / unfair_advantage)
+- Step 1 の `canvas.topic_tags` (主要クエリで既に使用したキーワード — これと完全一致しないこと)
+
+生成後、必ずキャッシュに保存する:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/subcategory_generator.py save \
+  --canvas-hash <canvas.content_hash> \
+  --subcategories-json '<生成した 3 個のサブカテゴリ JSON 配列>'
+```
+
+#### 2.5-c: サブカテゴリの各クエリで追加検索
+
+各サブカテゴリの `queries` を `search_twitterapi.py` に渡して追加検索する。
+**API クレジット節約のため `--max-results 10` に縮小する。**
+
+```bash
+python3 .claude/skills/_x-shared/scripts/search_twitterapi.py \
+  --query "<subcategory.queries[i]>" \
+  --language ja \
+  --hours-back 12 \
+  --min-likes 2 \
+  --max-results 10 \
+  --exclude-ids-json '<除外ID JSON>'
+```
+
+3 サブカテゴリ × 1〜2 クエリ ≒ 30〜60 件を追加で取得し、Step 2 の主要結果とマージ (重複除去)。
+
+**重要:** マージ時、各候補に **由来フラグ** を付ける。
+- `origin: "main"` (Step 2 由来) → スコアそのまま
+- `origin: "subcategory"` (Step 2.5-c 由来) → Step 3 のスコアリング時に **関連性スコア × 0.7** を適用
+
 ### Step 3: スコアリング (リアルタイム版)
 
 各候補に以下の重み付きスコアを計算:
 
 | 項目 | 重み | 計算 |
 |---|---:|---|
-| **関連性** | 0.5 | lean-canvas.md のキートピックとの一致度 (0-1) |
+| **関連性** | 0.5 | lean-canvas.md のキートピックとの一致度 (0-1)。**`origin == "subcategory"` の候補は最後に × 0.7** |
 | **新鮮度** | 0.3 | `1.0 - (hours_since_post / 12)` を 0〜1 にクリップ |
 | **会話参加性** | 0.2 | `reply_count` が適度(1〜10)なら +、大量(50+)なら -0.3(炎上注意) |
 | **炎上リスク(負)** | - | 引用元本文を flame_check にかけて BLOCK なら **除外** |
@@ -196,7 +250,8 @@ python3 .claude/skills/_x-shared/scripts/used_tweets.py record \
 |---|---|
 | `lean-canvas.md` が無い | エラーで停止 |
 | `TWITTERAPI_IO_KEY` が空 | .env 設定を促して停止 |
-| 直近 12 時間で 0 件 | `--hours-back 24` に拡張して再試行、それでも 0 件なら理由を明示 |
+| 主要クエリのユニーク取得が 5 件未満 | **Step 2.5 (サブカテゴリフォールバック)** を実行。それでも 5 件未満なら以下の時間拡張へ |
+| サブカテゴリフォールバック後も 5 件未満 | `--hours-back 24` に拡張して再試行(主要クエリのみ)、それでも 0 件なら理由を明示 |
 | 5 件取得できるが全て BLOCK | クエリ変更を促して停止 |
 | スコアリング後 5 件未満 | 得られた分だけ提示、理由を明示 |
 | TwitterAPI.io が `429` | 3 秒待って 1 回リトライ(search_twitterapi.py 内で対応) |

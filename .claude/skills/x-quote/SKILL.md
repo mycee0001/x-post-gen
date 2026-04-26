@@ -69,6 +69,51 @@ python3 .claude/skills/_x-shared/scripts/search_twitterapi.py \
 - API キー不正 / ネットワーク障害は明示的に伝える
 - 結果が少なすぎる場合は `--min-likes 5` に下げて再検索
 
+### Step 3.5: 主要クエリのヒット数が少ない場合のサブカテゴリフォールバック
+
+**3 クエリの結果を重複除去した後、ユニークツイート数 < 5 の場合のみ実行する。**
+ユニーク数 ≥ 5 ならこの Step はスキップして Step 4 へ進む。
+
+#### 3.5-a: サブカテゴリのキャッシュ確認
+
+```bash
+python3 .claude/skills/_x-shared/scripts/subcategory_generator.py load \
+  --canvas-hash <Step 1 で取得した canvas.content_hash>
+```
+
+返り値:
+- `{"hit": true, "entry": {...}}` → キャッシュあり。`entry.subcategories` を使って 3.5-c へ
+- `{"hit": false}` → キャッシュなし。3.5-b へ
+
+#### 3.5-b: Claude がサブカテゴリを生成 (キャッシュ miss 時のみ)
+
+`.claude/skills/_x-shared/prompts/subcategory_generation.md` を読み込み、
+そのプロンプトの指示通りに **Claude 自身が 3 個のサブカテゴリを生成** する。
+
+入力コンテキスト:
+- Step 1 の `canvas.sections` (problem / solution / customer_segments / channels / uvp / unfair_advantage)
+- Step 1 の `canvas.topic_tags` (主要クエリで既に使用したキーワード — これと完全一致しないこと)
+
+生成後、必ずキャッシュに保存する:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/subcategory_generator.py save \
+  --canvas-hash <canvas.content_hash> \
+  --subcategories-json '<生成した 3 個のサブカテゴリ JSON 配列>'
+```
+
+#### 3.5-c: サブカテゴリの各クエリで追加検索
+
+各サブカテゴリの `queries` を `search_twitterapi.py` に渡して追加検索する。
+**API クレジット節約のため `--max-results 10` に縮小する。** その他オプション
+(`--hours-back 24` / `--min-likes 10` / `--exclude-ids-json`) は Step 3 と同じ。
+
+3 サブカテゴリ × 1〜2 クエリ ≒ 30〜60 件を追加で取得し、Step 3 の主要結果とマージ (重複除去)。
+
+**重要:** マージ時、各候補に **由来フラグ** を付ける。
+- `origin: "main"` (Step 3 由来) → スコアそのまま
+- `origin: "subcategory"` (Step 3.5-c 由来) → Step 5 のスコアリング時に **関連性スコア × 0.7** を適用
+
 ### Step 4: Tavily Search で背景補強 (1 回のみ)
 
 候補ツイートの主要トピックで 1 回だけ調査:
@@ -85,7 +130,7 @@ python3 .claude/skills/_x-shared/scripts/search_tavily.py \
 
 | 項目 | 重み | 計算 |
 |---|---|---|
-| **関連性** | 0.35 | lean-canvas.md のキートピックとの一致度 (0-1) |
+| **関連性** | 0.35 | lean-canvas.md のキートピックとの一致度 (0-1)。**`origin == "subcategory"` の候補は最後に × 0.7** |
 | **エンゲージメント** | 0.40 | `min(like_count / 100, 1.0)` 等の正規化。バズっているポストを優先 |
 | **炎上リスク(負)** | 0.15 | 本文を flame_check にかけて BLOCK=-1, WARN=-0.5, SAFE=0 |
 | **重複ペナルティ(負)** | 0.10 | 過去 30 日に同じアカウントを引用済みなら -1、同一 tweet_id は -∞ |
@@ -241,7 +286,8 @@ python3 .claude/skills/_x-shared/scripts/used_tweets.py record \
 | `lean-canvas.md` が無い | エラーメッセージで停止 |
 | `TWITTERAPI_IO_KEY` が空 | .env 設定を促して停止 |
 | `TAVILY_API_KEY` が空 | 同上(Tavily スキップで続けるか確認) |
-| TwitterAPI.io が 0 件 | クエリを緩めて再検索するか、ユーザーに確認 |
+| 主要クエリのユニーク取得が 5 件未満 | **Step 3.5 (サブカテゴリフォールバック)** を実行。それでも 5 件未満なら以下のクエリ緩和へ |
+| サブカテゴリフォールバック後も 0 件 | クエリを緩めて再検索するか、ユーザーに確認 |
 | スコアリング後 5 件未満 | 得られた分だけ提示、理由を明示 |
 | 全候補 BLOCK | クエリ変更を促して停止 |
 | TwitterAPI.io が `402`(クレジット不足) | **それまでに成功したクエリの結果を使って候補生成を続行する**。1 件も取得できていない場合のみ停止し、クレジットリチャージを促す。途中で 402 になった旨をユーザーに明示する |
