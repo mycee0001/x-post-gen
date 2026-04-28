@@ -6,6 +6,7 @@
   - Copy ボタンでクリップボードにコピー
   - Open in X リンクで X に遷移
   - 全候補の判定後「Complete」ボタンで結果を CLI に返す
+  - スキップが 1 件でもあれば理由収集フォーム (3カテゴリ + 自由記述) を表示
 
 使い方:
   python3 present_results.py --kind post --json '<JSON>'
@@ -13,24 +14,25 @@
   python3 present_results.py --kind quote --json '<JSON>'
 
 戻り値 (stdout JSON):
-  {"adopted": [1, 3], "skipped": [2, 4, 5]}
+  {"adopted": [1, 3], "skipped": [2, 4, 5], "feedback": [...], "auto_adopted": false}
+
+タイムアウト動作:
+  10 分間 Complete が押されない場合、すべての候補を「強制採用」して
+  {"adopted": [...全番号], "skipped": [], "feedback": [], "auto_adopted": true}
+  を返す。これにより履歴管理が中断されない。
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import signal
 import socket
-import subprocess
-import sys
 import threading
 import webbrowser
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs
 
 JST = timezone(timedelta(hours=9))
+TIMEOUT_SECONDS = 600  # 10 分
 
 # ---------------------------------------------------------------------------
 # HTML Template
@@ -50,6 +52,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     max-width: 680px; margin: 0 auto;
   }}
   h1 {{ font-size: 1.3rem; margin-bottom: 8px; color: #1d9bf0; }}
+  h2 {{ font-size: 1.1rem; margin-bottom: 12px; color: #1d9bf0; }}
   .subtitle {{ color: #71767b; font-size: 0.85rem; margin-bottom: 16px; }}
   .card {{
     background: #16181c; border: 1px solid #2f3336; border-radius: 12px;
@@ -108,12 +111,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .btn-complete:hover {{ background: #1a8cd8; }}
   .btn-complete:disabled {{ background: #536471; cursor: not-allowed; }}
   .progress {{ color: #71767b; font-size: 0.85rem; margin-bottom: 8px; }}
+  .countdown {{ color: #ffd400; font-size: 0.75rem; margin-top: 4px; }}
   .author {{ color: #1d9bf0; font-weight: 600; }}
   .angle {{ color: #71767b; font-size: 0.8rem; }}
   .done-message {{
     text-align: center; padding: 40px; color: #00ba7c; font-size: 1.1rem;
   }}
   .done-message p {{ margin-top: 8px; color: #71767b; font-size: 0.85rem; }}
+  .feedback-intro {{
+    background: #16181c; border: 1px solid #ffd40044; border-radius: 12px;
+    padding: 16px; margin-bottom: 16px; font-size: 0.9rem; color: #ffd400;
+  }}
+  .feedback-card {{
+    background: #16181c; border: 1px solid #2f3336; border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }}
+  .feedback-snippet {{
+    background: #0a0a0a; border-radius: 6px; padding: 8px 12px;
+    margin-bottom: 12px; font-size: 0.85rem; color: #8b98a5; line-height: 1.5;
+    max-height: 80px; overflow: hidden; text-overflow: ellipsis;
+  }}
+  .feedback-row {{ margin-bottom: 10px; }}
+  .feedback-row label {{ display: block; font-size: 0.85rem; color: #e7e9ea; margin-bottom: 6px; font-weight: 600; }}
+  .feedback-row select, .feedback-row textarea {{
+    width: 100%; background: #000; color: #e7e9ea;
+    border: 1px solid #2f3336; border-radius: 8px;
+    padding: 8px 12px; font-family: inherit; font-size: 0.9rem;
+  }}
+  .feedback-row textarea {{ min-height: 60px; resize: vertical; }}
+  .feedback-help {{ color: #71767b; font-size: 0.75rem; margin-top: 4px; }}
 </style>
 </head>
 <body>
@@ -124,9 +150,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {cards}
 </div>
 
+<div id="feedback-section" style="display:none;">
+  <h2>スキップ理由を教えてください</h2>
+  <div class="feedback-intro">
+    調整ロジックを改善するため、スキップした候補ごとに理由カテゴリを選んでください。
+    自由記述は任意ですが具体的だと精度が上がります。
+  </div>
+  <div id="feedback-cards"></div>
+</div>
+
 <div class="complete-bar" id="complete-bar">
   <div class="progress" id="progress">0 / {total} decided</div>
-  <button class="btn-complete" id="btn-complete" disabled onclick="submitDecisions()">
+  <div class="countdown" id="countdown">⏱ 自動採用まで残り <span id="remaining">10:00</span> (応答なしで全候補を強制採用)</div>
+  <button class="btn-complete" id="btn-complete" disabled onclick="handleComplete()">
     Complete
   </button>
 </div>
@@ -134,13 +170,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <script>
 const total = {total};
 const decisions = {{}};
+const itemsData = {items_json};
+let phase = 'decide';  // decide | feedback
 
 function decide(num, action) {{
   decisions[num] = action;
   const card = document.getElementById('card-' + num);
   card.className = 'card ' + (action === 'adopt' ? 'adopted' : 'skipped');
 
-  // Update buttons
   const adoptBtn = document.getElementById('adopt-' + num);
   const skipBtn = document.getElementById('skip-' + num);
   if (action === 'adopt') {{
@@ -153,7 +190,6 @@ function decide(num, action) {{
     adoptBtn.disabled = true;
   }}
 
-  // Show status badge
   const header = card.querySelector('.card-header');
   const existing = header.querySelector('.status-badge');
   if (existing) existing.remove();
@@ -183,7 +219,96 @@ function copyText(btn, id) {{
   }});
 }}
 
-function submitDecisions() {{
+function handleComplete() {{
+  if (phase === 'decide') {{
+    const skipped = Object.entries(decisions)
+      .filter(([_, a]) => a === 'skip')
+      .map(([n, _]) => parseInt(n));
+    if (skipped.length === 0) {{
+      submitFinal([]);
+    }} else {{
+      showFeedbackForm(skipped);
+    }}
+  }} else if (phase === 'feedback') {{
+    const feedback = collectFeedback();
+    submitFinal(feedback);
+  }}
+}}
+
+function showFeedbackForm(skippedNums) {{
+  phase = 'feedback';
+  document.getElementById('cards').style.display = 'none';
+  const fbSection = document.getElementById('feedback-section');
+  const fbCards = document.getElementById('feedback-cards');
+  fbSection.style.display = 'block';
+  fbCards.innerHTML = '';
+
+  for (const num of skippedNums) {{
+    const item = itemsData.find(i => i.number === num) || {{}};
+    const snippet = item.reply_text || item.comment_text || item.text || '';
+    const sourceText = item.source_text || '';
+    const author = item.author || '';
+
+    const div = document.createElement('div');
+    div.className = 'feedback-card';
+    div.innerHTML = `
+      <div class="card-header"><span>#${{num}}${{author ? ' | <span class="author">' + escapeHtml(author) + '</span>' : ''}}</span></div>
+      ${{sourceText ? '<div class="feedback-snippet">引用元: ' + escapeHtml(sourceText.slice(0,100)) + '</div>' : ''}}
+      <div class="feedback-snippet">原稿: ${{escapeHtml(snippet.slice(0,100))}}</div>
+      <div class="feedback-row">
+        <label>カテゴリ <span style="color:#71767b;font-weight:400;">(必須)</span></label>
+        <select id="fb-cat-${{num}}">
+          <option value="source">① 収集された元ポストが不適切 (検索クエリ・対象アカウント)</option>
+          <option value="content">② 生成原稿の内容が不適切 (トーン・切り口・自己言及)</option>
+          <option value="flame">③ 炎上チェックの判定がおかしい (誤検知 or 見逃し)</option>
+          <option value="other">④ その他</option>
+        </select>
+      </div>
+      <div class="feedback-row">
+        <label>具体的な理由 <span style="color:#71767b;font-weight:400;">(任意・推奨)</span></label>
+        <textarea id="fb-reason-${{num}}" placeholder="例: このアカウントは政治的なポストが多いので外したい / もう少し簡潔にしたい / 数字を出さなくていい 等"></textarea>
+        <div class="feedback-help">次回実行時、Claude がこの理由を読んでクエリ・原稿・炎上判定を調整します。</div>
+      </div>
+    `;
+    fbCards.appendChild(div);
+  }}
+
+  document.getElementById('progress').textContent = 'スキップ理由を入力後、Complete を再度クリック';
+  document.getElementById('btn-complete').disabled = false;
+  document.getElementById('btn-complete').textContent = 'フィードバック送信して完了';
+}}
+
+function collectFeedback() {{
+  const skipped = Object.entries(decisions)
+    .filter(([_, a]) => a === 'skip')
+    .map(([n, _]) => parseInt(n));
+  const feedback = [];
+  for (const num of skipped) {{
+    const cat = document.getElementById('fb-cat-' + num).value;
+    const reason = document.getElementById('fb-reason-' + num).value.trim();
+    const item = itemsData.find(i => i.number === num) || {{}};
+    feedback.push({{
+      number: num,
+      category: cat,
+      reason: reason,
+      item: {{
+        url: item.url || '',
+        author: item.author || '',
+        source_text: item.source_text || '',
+        text: item.reply_text || item.comment_text || item.text || ''
+      }}
+    }});
+  }}
+  return feedback;
+}}
+
+function escapeHtml(s) {{
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}}
+
+function submitFinal(feedback) {{
   const adopted = [];
   const skipped = [];
   for (const [num, action] of Object.entries(decisions)) {{
@@ -196,15 +321,30 @@ function submitDecisions() {{
   fetch('/complete', {{
     method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
-    body: JSON.stringify({{ adopted, skipped }})
+    body: JSON.stringify({{ adopted, skipped, feedback }})
   }}).then(r => r.json()).then(data => {{
     document.getElementById('cards').innerHTML = '';
+    document.getElementById('feedback-section').style.display = 'none';
     document.getElementById('complete-bar').innerHTML =
       '<div class="done-message">' +
       'Completed! Adopted ' + adopted.length + ' / ' + total +
+      (feedback.length ? '<p>フィードバック ' + feedback.length + ' 件を保存しました</p>' : '') +
       '<p>You can close this tab now.</p></div>';
   }});
 }}
+
+// ---- Countdown timer (auto-adopt at 10 min) ----
+let secondsLeft = {timeout_seconds};
+function tickCountdown() {{
+  const m = Math.floor(secondsLeft / 60);
+  const s = secondsLeft % 60;
+  const el = document.getElementById('remaining');
+  if (el) el.textContent = m + ':' + (s < 10 ? '0' + s : s);
+  secondsLeft -= 1;
+  if (secondsLeft < 0) return;
+  setTimeout(tickCountdown, 1000);
+}}
+tickCountdown();
 </script>
 </body>
 </html>"""
@@ -307,10 +447,13 @@ def build_html(kind: str, items: list[dict]) -> str:
             ))
 
     title = f"X {kind_label} Candidates ({len(items)})"
+    items_json = json.dumps(items, ensure_ascii=False)
     return HTML_TEMPLATE.format(
         kind_label=kind_label, title=title,
         cards="\n".join(cards_html), timestamp=timestamp,
         total=len(items),
+        items_json=items_json,
+        timeout_seconds=TIMEOUT_SECONDS,
     )
 
 
@@ -374,15 +517,25 @@ def main():
     url = f"http://127.0.0.1:{port}"
     webbrowser.open(url)
 
-    # Wait for user to complete (timeout 10 minutes)
-    RequestHandler.result_event.wait(timeout=600)
+    # Wait for user to complete
+    completed = RequestHandler.result_event.wait(timeout=TIMEOUT_SECONDS)
 
     server.shutdown()
 
-    if RequestHandler.result:
-        print(json.dumps(RequestHandler.result, ensure_ascii=False))
+    if completed and RequestHandler.result is not None:
+        result = RequestHandler.result
+        result.setdefault("auto_adopted", False)
+        result.setdefault("feedback", [])
+        print(json.dumps(result, ensure_ascii=False))
     else:
-        print(json.dumps({"adopted": [], "skipped": [i["number"] for i in items]}))
+        # タイムアウト → 全候補を強制採用 (履歴管理を中断させない)
+        all_numbers = [i["number"] for i in items]
+        print(json.dumps({
+            "adopted": all_numbers,
+            "skipped": [],
+            "feedback": [],
+            "auto_adopted": True,
+        }, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -42,6 +42,28 @@ python3 .claude/skills/_x-shared/scripts/lean_canvas_loader.py --path ./lean-can
 
 - 無ければエラーメッセージで停止
 
+### Step 1.5: プロジェクトローカルな調整ロジック (tuning) を読み込む
+
+過去にユーザーがスキップした候補のフィードバックを読み込み、本実行で適用する:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/tuning.py load --kind reply --since-days 30 --limit 30
+```
+
+返ってきたエントリを **必ず本実行に反映** する:
+
+| category | 適用先 |
+|---|---|
+| `source` | Step 2 のクエリ構築・著者フィルタ・除外アカウントに反映(同種のポストを拾わないようクエリ調整 / 著者ハンドルを除外) |
+| `content` | Step 6 の原稿生成方針に反映(指摘されたトーン/切り口/自己言及度を回避) |
+| `flame` | Step 7 の炎上チェック解釈に反映(誤検知ならその種の WARN を許容、見逃しなら追加で再生成) |
+| `other` | 自由記述を読んで Claude が判断 |
+
+**重要:** このチューニングは `.x-history/tuning.jsonl` に保存されており、プロジェクト固有。
+別プロジェクト(別の cwd)では別のチューニングが効く設計。
+
+エントリ 0 件なら通常通り進める。
+
 ### Step 2: 使用済みツイート ID を取得 + TwitterAPI.io でリアルタイムに関連ポストを検索
 
 まず他スキル(x-quote)で使用済みのツイート ID を取得して除外リストにする:
@@ -286,13 +308,31 @@ JSON 配列の各要素:
 
 **ブラウザ上で:**
 - 各候補に **Adopt / Skip ボタン**、**Copy ボタン**、**Open in X リンク** が表示される
-- ユーザーが全候補の判定を終えて **Complete ボタン** を押すと、スクリプトが結果 JSON を stdout に返す
-- 戻り値: `{"adopted": [1, 3], "skipped": [2, 4, 5]}`
+- ユーザーが全候補の判定を終えて **Complete ボタン** を押す
+- **スキップが 1 件でもあれば** 自動的にスキップ理由フォームが表示される(カテゴリ: source / content / flame / other + 自由記述)
+- フォーム入力後 **Complete を再度クリック** で送信され、スクリプトが結果 JSON を stdout に返す
+- 戻り値: `{"adopted": [1, 3], "skipped": [2, 4, 5], "feedback": [...], "auto_adopted": false}`
 
-**スクリプトはブラウザで Complete が押されるまでブロックする**（最大 10 分）。
-結果 JSON の `adopted` 配列を使って Step 9 の使用済みツイート ID 記録を行う。
+**タイムアウト動作 (10 分):**
+ユーザーがブラウザで何も応答しないまま 10 分経過すると、`present_results.py` は
+**全候補を強制的に「採用」扱い** で返す (`{"adopted": [全番号], "skipped": [], "feedback": [], "auto_adopted": true}`)。
+これにより履歴管理が中断されず、ブラウザのタブも自然に閉じられる。
 
-### Step 9: 使用済みツイート ID を記録 + 完了
+### Step 9: フィードバックを保存 + 使用済みツイート ID を記録 + 完了
+
+#### 9-a: スキップフィードバックの保存 (`feedback` が非空の場合のみ)
+
+ブラウザから返ってきた `feedback` 配列を tuning に保存:
+
+```bash
+python3 .claude/skills/_x-shared/scripts/tuning.py save \
+  --kind reply \
+  --feedback-json '<feedback 配列の JSON>'
+```
+
+これは次回 `/x-reply` 実行時の Step 1.5 で読み込まれ、ロジック調整に使われる。
+
+#### 9-b: 使用済みツイート ID の記録
 
 **リプライの履歴管理(quotes.jsonl 的なもの)は行わない** が、
 候補として提示した 5 件のツイート ID は **使用済みステートに記録する**:
@@ -306,7 +346,10 @@ python3 .claude/skills/_x-shared/scripts/used_tweets.py record \
 これにより、同じタイミングや近いタイミングで `/x-quote` を実行しても、
 ここで候補に挙がったツイートは除外される。
 
+#### 9-c: 完了メッセージ
+
 ユーザーは気に入った候補を選んで手動でリプライする。
+`auto_adopted: true` の場合は「ブラウザでの応答がなかったため全候補を自動採用しました」を明示する。
 
 ## エラーハンドリング
 
