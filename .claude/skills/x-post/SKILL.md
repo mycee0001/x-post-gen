@@ -62,7 +62,20 @@ python3 .claude/skills/_x-shared/scripts/search_tavily.py \
 
 ### Step 4: 5 つの切り口でポスト案を生成
 
-`.claude/skills/_x-shared/prompts/post_generation.md` のプロンプトテンプレートに従い、**Claude 自身** が 5 バリエーションを生成する。
+**必読:** 以下の 2 ファイルを **必ず両方読み込んだうえで** 5 件分の原稿を作る。
+- `.claude/skills/_x-shared/prompts/post_generation.md` (ポスト固有のルール)
+- `.claude/skills/_x-shared/prompts/japanese_writing_style.md` (日本語ベストプラクティス・全 X 系共通)
+
+主要ルール（詳細は上記 2 ファイル参照）:
+- **文体は常体（だ・である調）をベース**。読者を意識した説明や特定のメッセージを伝える段落では丁寧体に切り替えてもよいが、**段落単位で統一** する
+- **一人称は「私」**
+- **一行最大 50 字、理想 35 字** で改行を入れる
+- **中学生でもわかる単語** に置き換える。専門用語・略語は説明を添える
+- **使用禁止用語**（略式侮蔑語・レッテル・差別用語・性的侮辱）を一切使わない
+- **強い断定**（絶対・必ず・100%・業界No.1・唯一）を使わない
+- 数字を引用するときは必ず出典 URL を添える
+
+出力前に `japanese_writing_style.md` 第 7 節のチェックリストで自己点検すること。
 
 生成時の入力:
 - lean-canvas.md の関連セクション (PROBLEM / UVP / SOLUTION / UNFAIR ADVANTAGE)
