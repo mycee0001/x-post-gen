@@ -1,0 +1,122 @@
+version: 1
+severity_levels: [SAFE, WARN, BLOCK]
+
+# 同意スタンス検査ルール (x-reply / x-quote 共通)
+#
+# 目的: 元ポストの主張に対して否定・反論・相対化・上から目線の指摘・
+#       批判的なメタコメント・敵視メタファーを含む文を検出する。
+#
+# 設計方針:
+#   - BLOCK: 同意スタンスが明確に崩れているパターン (再生成必須)
+#   - WARN : 同意スタンスを崩しかねない曖昧なパターン (再生成推奨)
+#   - 偽陽性は許容する。 同意の強制が要件のため、安全側に倒している。
+
+rules:
+  # ----------------------------- BLOCK -----------------------------
+
+  - id: comparative_relativization
+    severity: BLOCK
+    description: 比較で元ポストの主張を相対化・否定するパターン (「Xより Y のほうが」)
+    patterns:
+      - type: regex
+        pattern: "(より|よりは|よりも)[^\\n、。]{1,30}(の方|のほう|ほうが|方が)"
+    examples_hit:
+      - "スマホを敵にするより連続した思考時間を測るほうが有効"
+      - "本数を減らすより集中できる作業帯に並べるほうが有効"
+    examples_safe:
+      - "前より集中しやすくなった"
+
+  - id: negative_evaluation_keywords
+    severity: BLOCK
+    description: 元ポストの主張・言い回しに対する直接的な否定的評価
+    patterns:
+      - type: keyword
+        keywords:
+          - 強引
+          - 乱暴
+          - 的外れ
+          - 早計
+          - 浅い
+          - 表面的
+          - 単純化しすぎ
+          - 単純すぎ
+          - 素朴すぎ
+          - 短絡的
+          - 飛躍
+          - 言い過ぎ
+          - 誇張
+          - 違和感
+          - は強め
+          - はやや強
+          - は荒々し
+          - は強い表現
+          - は強すぎ
+          - はきつい
+
+  - id: correction_or_negation
+    severity: BLOCK
+    description: 元ポストの主張を訂正・打ち消す表現
+    patterns:
+      - type: regex
+        pattern: "(とは言えません|とは限りません|とは限らない|わけではない|わけでもない|ではありません|は誤解|は誤り|は間違|に当たらない|に該当しない|の話ではな|とは別の話|とは違う話)"
+
+  - id: meta_criticism
+    severity: BLOCK
+    description: 元ポストの命名・表現自体を批判するメタコメント
+    patterns:
+      - type: regex
+        pattern: "(という命名|という表現|という言い方|というフレーズ|という言葉|という呼び方)[はが][^\\n、。]{0,20}(強|きつ|乱暴|誇張|誤解|的外れ|浅|単純|大げさ|大袈裟|不正確|曖昧|雑)"
+
+  - id: enemy_or_dismissal_metaphor
+    severity: BLOCK
+    description: 元ポスト・元ポスト内の対象を敵視・切り捨てる比喩
+    patterns:
+      - type: regex
+        pattern: "(を敵にする|を敵視|を悪者に|を切り捨て|を一蹴|を退ける)"
+
+  - id: explicit_disagreement
+    severity: BLOCK
+    description: 明示的な反対・異論表明
+    patterns:
+      - type: regex
+        pattern: "(私は反対|賛成しかね|同意しかね|納得できま?せん|疑問が(残|あ)|懐疑的|首をかしげ|うなずけません)"
+
+  # ----------------------------- WARN ------------------------------
+
+  - id: adversative_opening
+    severity: WARN
+    description: 逆接接続詞からの書き出し (冒頭または文頭)
+    patterns:
+      - type: regex
+        pattern: "(^|\\n|。)\\s*(しかし|ただ、|ただし|とはいえ|けれど|けれども|でも、|もっとも|他方で|一方で|逆に言うと|逆に言えば)"
+
+  - id: dismissive_qualification
+    severity: WARN
+    description: 元ポストの主張を限定・矮小化する前置き
+    patterns:
+      - type: regex
+        pattern: "(に偏る|に偏って|に留ま|に過ぎ|だけでは|だけだと|だけ見ると|を一面|一面的|片面的|片寄|に寄り過ぎ|に依存しすぎ)"
+
+  - id: implicit_correction
+    severity: WARN
+    description: 上から目線の補足・訂正・整理型の前置き
+    patterns:
+      - type: keyword
+        keywords:
+          - 正確には
+          - 厳密には
+          - より正確に言うと
+          - 補足すると
+          - 言い直すと
+          - 注意したいのは
+          - 注意点としては
+          - 留意点としては
+          - 誤解されがち
+          - 勘違いされがち
+
+  - id: but_pattern_with_evaluation
+    severity: WARN
+    description: 「〜が、」直前で評価語を伴う逆接(同意の温度を冷ますパターン)
+    patterns:
+      - type: regex
+        pattern: "(極端|乱暴|強め|きつめ|強い|きつい|厳しい|大げさ|大袈裟|偏り|偏った|限定的|やや雑)[^\\n。]{0,10}(が、|ですが、|けど、|けれど、|ものの、)"
