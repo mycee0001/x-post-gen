@@ -75,7 +75,7 @@ python3 .claude/skills/_x-shared/scripts/search_tavily.py \
 - **強い断定**（絶対・必ず・100%・業界No.1・唯一）を使わない
 - 数字を引用するときは必ず出典 URL を添える
 
-出力前に `japanese_writing_style.md` 第 7 節のチェックリストで自己点検すること。
+出力前に `japanese_writing_style.md` 第 8 節のチェックリストで自己点検すること。
 
 生成時の入力:
 - lean-canvas.md の関連セクション (PROBLEM / UVP / SOLUTION / UNFAIR ADVANTAGE)
