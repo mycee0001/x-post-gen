@@ -360,6 +360,7 @@ def main() -> int:
             exclude_ids=exclude_ids,
             min_author_followers=args.min_author_followers,
             max_replies=args.max_replies,
+            min_replies=args.min_replies,
         )
     except TwitterAPIError as e:
         print(f"ERROR: {e}", file=sys.stderr)

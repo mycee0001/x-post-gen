@@ -28,8 +28,23 @@ def _file_for(kind: str, history_dir: str) -> Path:
     return ensure_history_dir(history_dir) / f"{kind}s.jsonl"
 
 
+def _entry_matches_service(entry: dict[str, Any], service: str | None) -> bool:
+    """エントリが指定 service にマッチするかを判定する。
+
+    - service=None なら常に True (全件)
+    - エントリに service フィールドが無い場合は **常に True** (旧データを無駄にしない)
+    - エントリに service フィールドがあれば一致時のみ True
+    """
+    if service is None:
+        return True
+    entry_svc = entry.get("service")
+    if not entry_svc:
+        return True  # 後方互換: service タグが付いていない過去データは全 service に hit させる
+    return entry_svc == service
+
+
 def append(kind: str, entry: dict[str, Any], history_dir: str = "./.x-history") -> None:
-    """1 エントリを追記する。"""
+    """1 エントリを追記する。entry に service フィールドを含めることを推奨。"""
     path = _file_for(kind, history_dir)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -39,8 +54,13 @@ def load(
     kind: str,
     since_days: int = 30,
     history_dir: str = "./.x-history",
+    service: str | None = None,
 ) -> list[dict[str, Any]]:
-    """直近 since_days 日のエントリを返す(ファイルが無ければ空リスト)。"""
+    """直近 since_days 日のエントリを返す(ファイルが無ければ空リスト)。
+
+    Args:
+        service: 指定すると同じ service のエントリ + service タグ無しの旧データを返す。
+    """
     path = _file_for(kind, history_dir)
     if not path.exists():
         return []
@@ -54,6 +74,8 @@ def load(
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not _entry_matches_service(obj, service):
                 continue
             created_at = obj.get("created_at")
             if created_at:
@@ -69,8 +91,12 @@ def load(
     return out
 
 
-def stats(kind: str, history_dir: str = "./.x-history") -> dict[str, Any]:
-    """集計統計を返す。"""
+def stats(
+    kind: str,
+    history_dir: str = "./.x-history",
+    service: str | None = None,
+) -> dict[str, Any]:
+    """集計統計を返す。service 指定時は同 service + 旧データのみ集計。"""
     path = _file_for(kind, history_dir)
     total = 0
     last_30d = 0
@@ -94,6 +120,8 @@ def stats(kind: str, history_dir: str = "./.x-history") -> dict[str, Any]:
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not _entry_matches_service(obj, service):
                 continue
             total += 1
             in_window = False
@@ -139,10 +167,20 @@ def main() -> int:
     p_load.add_argument("--kind", required=True, choices=VALID_KINDS)
     p_load.add_argument("--since-days", type=int, default=30)
     p_load.add_argument("--history-dir", default="./.x-history")
+    p_load.add_argument(
+        "--service",
+        default=None,
+        help="service 識別子 (lean-canvas-{service}.md)。指定時は同 service + service 無し旧データを返す",
+    )
 
     p_stats = sub.add_parser("stats", help="集計を表示")
     p_stats.add_argument("--kind", required=True, choices=VALID_KINDS)
     p_stats.add_argument("--history-dir", default="./.x-history")
+    p_stats.add_argument(
+        "--service",
+        default=None,
+        help="service 識別子。指定時は同 service + service 無し旧データを集計",
+    )
 
     args = parser.parse_args()
 
@@ -157,12 +195,12 @@ def main() -> int:
         return 0
 
     if args.cmd == "load":
-        out = load(args.kind, args.since_days, args.history_dir)
+        out = load(args.kind, args.since_days, args.history_dir, service=args.service)
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
 
     if args.cmd == "stats":
-        out = stats(args.kind, args.history_dir)
+        out = stats(args.kind, args.history_dir, service=args.service)
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
 

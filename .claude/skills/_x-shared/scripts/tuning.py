@@ -39,6 +39,7 @@ def save(
     kind: str,
     feedback: list[dict],
     history_dir: str = "./.x-history",
+    service: str | None = None,
 ) -> int:
     """スキップ理由を保存する。
 
@@ -46,6 +47,7 @@ def save(
         kind: "reply" | "quote" | "post"
         feedback: 各要素は {category, reason, item: {...}} の dict
         history_dir: 履歴ディレクトリ
+        service: service 識別子。指定するとエントリに service フィールドを追加。
 
     Returns:
         保存した件数
@@ -70,6 +72,8 @@ def save(
                 "reason": fb.get("reason", ""),
                 "item": fb.get("item", {}),
             }
+            if service:
+                entry["service"] = service
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             count += 1
     return count
@@ -81,6 +85,7 @@ def load(
     since_days: int = 30,
     limit: int = 50,
     history_dir: str = "./.x-history",
+    service: str | None = None,
 ) -> list[dict]:
     """調整エントリを取得する。
 
@@ -90,6 +95,8 @@ def load(
         since_days: 何日前まで遡るか
         limit: 最大件数 (新しい順から)
         history_dir: 履歴ディレクトリ
+        service: service フィルタ。指定時は同 service + service タグ無しの旧データを返す
+                 (後方互換のため、旧データはどの service にも hit させる)
 
     Returns:
         エントリのリスト (新しい順)
@@ -114,6 +121,11 @@ def load(
                 continue
             if category and obj.get("category") != category:
                 continue
+            if service:
+                entry_svc = obj.get("service")
+                # 後方互換: service タグ無しは全 service で hit させる
+                if entry_svc and entry_svc != service:
+                    continue
             created_at = obj.get("created_at")
             if created_at:
                 try:
@@ -133,9 +145,16 @@ def stats(
     kind: str | None = None,
     since_days: int = 30,
     history_dir: str = "./.x-history",
+    service: str | None = None,
 ) -> dict:
-    """カテゴリ別件数と最近の傾向を返す。"""
-    entries = load(kind=kind, since_days=since_days, limit=10_000, history_dir=history_dir)
+    """カテゴリ別件数と最近の傾向を返す。service 指定時は同 service + 旧データのみ集計。"""
+    entries = load(
+        kind=kind,
+        since_days=since_days,
+        limit=10_000,
+        history_dir=history_dir,
+        service=service,
+    )
     by_cat: Counter[str] = Counter()
     by_kind: Counter[str] = Counter()
     for e in entries:
@@ -157,6 +176,7 @@ def main() -> int:
     p_save.add_argument("--kind", required=True, choices=sorted(VALID_KINDS))
     p_save.add_argument("--feedback-json", required=True, help='[{"category":"source","reason":"...","item":{...}}] 形式')
     p_save.add_argument("--history-dir", default="./.x-history")
+    p_save.add_argument("--service", default=None, help="service 識別子 (lean-canvas-{service}.md)")
 
     p_load = sub.add_parser("load", help="調整エントリを取得")
     p_load.add_argument("--kind", choices=sorted(VALID_KINDS))
@@ -164,11 +184,17 @@ def main() -> int:
     p_load.add_argument("--since-days", type=int, default=30)
     p_load.add_argument("--limit", type=int, default=50)
     p_load.add_argument("--history-dir", default="./.x-history")
+    p_load.add_argument(
+        "--service",
+        default=None,
+        help="service フィルタ。指定時は同 service + service タグ無しの旧データを返す",
+    )
 
     p_stat = sub.add_parser("stats", help="件数集計")
     p_stat.add_argument("--kind", choices=sorted(VALID_KINDS))
     p_stat.add_argument("--since-days", type=int, default=30)
     p_stat.add_argument("--history-dir", default="./.x-history")
+    p_stat.add_argument("--service", default=None, help="service フィルタ")
 
     args = parser.parse_args()
 
@@ -181,7 +207,7 @@ def main() -> int:
         if not isinstance(feedback, list):
             print("ERROR: --feedback-json は配列である必要がある", file=sys.stderr)
             return 2
-        count = save(args.kind, feedback, args.history_dir)
+        count = save(args.kind, feedback, args.history_dir, service=args.service)
         print(json.dumps({"ok": True, "saved": count}, ensure_ascii=False))
         return 0
 
@@ -192,12 +218,13 @@ def main() -> int:
             since_days=args.since_days,
             limit=args.limit,
             history_dir=args.history_dir,
+            service=args.service,
         )
         print(json.dumps(entries, ensure_ascii=False, indent=2))
         return 0
 
     if args.cmd == "stats":
-        s = stats(args.kind, args.since_days, args.history_dir)
+        s = stats(args.kind, args.since_days, args.history_dir, service=args.service)
         print(json.dumps(s, ensure_ascii=False, indent=2))
         return 0
 
