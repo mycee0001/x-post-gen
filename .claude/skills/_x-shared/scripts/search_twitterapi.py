@@ -221,6 +221,7 @@ def search_tweets(
     exclude_ids: set[str] | None = None,
     min_author_followers: int = 0,
     max_replies: int | None = None,
+    min_replies: int = 0,
 ) -> list[dict[str, Any]]:
     """X 内ツイートを検索して共通スキーマに正規化して返す。
 
@@ -230,7 +231,9 @@ def search_tweets(
         min_author_followers: 著者フォロワー数の最低値。0 ならフィルタなし。
                               X 検索構文に follower 条件は無いため、取得後に除外する。
         max_replies: ツイートの返信数の上限。None ならフィルタなし。
-                     メガバイラル(自分のリプが埋もれる投稿)を除外するために使う。
+                     極端な炎上スレッドを除外したい場合に使う。
+        min_replies: ツイートの返信数の最低値。0 ならフィルタなし。
+                     活発な議論のみを対象にしたい場合に使う(Premium+ 返信ブースト最適化)。
     """
     q = _build_query(query, language=language, hours_back=hours_back, min_likes=min_likes)
     results: list[dict[str, Any]] = []
@@ -255,6 +258,8 @@ def search_tweets(
             if min_author_followers > 0 and norm["author_followers_count"] < min_author_followers:
                 continue
             if max_replies is not None and norm["reply_count"] > max_replies:
+                continue
+            if min_replies > 0 and norm["reply_count"] < min_replies:
                 continue
             results.append(norm)
             if len(results) >= max_results:
@@ -328,7 +333,13 @@ def main() -> int:
         "--max-replies",
         type=int,
         default=None,
-        help="ツイートの返信数上限。メガバイラル除外用。指定なしならフィルタなし",
+        help="ツイートの返信数上限。極端な炎上スレッド除外用。指定なしならフィルタなし",
+    )
+    parser.add_argument(
+        "--min-replies",
+        type=int,
+        default=0,
+        help="ツイートの返信数の最低値。活発な議論のみを対象にしたい場合に使う。0 ならフィルタなし",
     )
     args = parser.parse_args()
 
