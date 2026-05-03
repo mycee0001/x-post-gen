@@ -73,7 +73,7 @@ python3 .claude/skills/_x-shared/scripts/history.py load \
 python3 .claude/skills/_x-shared/scripts/history.py stats \
   --kind quote \
   --service <service>
-python3 .claude/skills/_x-shared/scripts/used_tweets.py load --hours-back 48
+python3 .claude/skills/_x-shared/scripts/used_tweets.py load
 ```
 
 - `accounts_quoted_last_30d` (そのサービス内) を控えておく(同じアカウントを 2 回以上引用しない)

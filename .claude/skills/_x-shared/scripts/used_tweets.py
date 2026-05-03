@@ -54,13 +54,17 @@ def record(
 
 
 def load(
-    hours_back: int = 48,
+    hours_back: int | None = None,
     history_dir: str = "./.x-history",
 ) -> list[str]:
-    """直近 hours_back 時間以内に使用されたツイート ID のリストを返す。
+    """使用済みツイート ID のリストを返す。
+
+    リプライ/引用は同じポストに対して二度行わない方針のため、
+    デフォルトでは **全期間** の使用済み ID を返す(厳格な重複防止)。
 
     Args:
-        hours_back: 何時間前まで遡るか (デフォルト 48h)
+        hours_back: 指定した場合のみ、その時間以内に使用された ID に絞る。
+            None (デフォルト) なら全期間の ID を返す。
         history_dir: 履歴ディレクトリ
 
     Returns:
@@ -71,7 +75,9 @@ def load(
         return []
     from datetime import datetime
 
-    cutoff = now_jst() - timedelta(hours=hours_back)
+    cutoff = (
+        now_jst() - timedelta(hours=hours_back) if hours_back is not None else None
+    )
     seen: set[str] = set()
     with path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -83,7 +89,7 @@ def load(
             except json.JSONDecodeError:
                 continue
             used_at = obj.get("used_at")
-            if used_at:
+            if cutoff is not None and used_at:
                 try:
                     dt = datetime.fromisoformat(used_at)
                     if dt.tzinfo is None:
@@ -98,13 +104,16 @@ def load(
 
 
 def cleanup(
-    keep_hours: int = 72,
+    keep_hours: int = 8760,
     history_dir: str = "./.x-history",
 ) -> int:
-    """古いエントリを削除してファイルを縮小する。
+    """古いエントリを削除してファイルを縮小する(任意操作)。
+
+    重複防止は `load()` の全期間モードで成立するため、通常はこの関数を呼ぶ必要はない。
+    ファイルサイズが過大になった場合のみ手動で実行する。
 
     Args:
-        keep_hours: この時間以内のエントリだけ残す
+        keep_hours: この時間以内のエントリだけ残す(デフォルト 1 年 = 8760h)
         history_dir: 履歴ディレクトリ
 
     Returns:
@@ -155,12 +164,23 @@ def main() -> int:
     p_rec.add_argument("--tweet-ids-json", required=True, help='["id1","id2"] 形式')
     p_rec.add_argument("--history-dir", default="./.x-history")
 
-    p_load = sub.add_parser("load", help="使用済み ID を取得")
-    p_load.add_argument("--hours-back", type=int, default=48)
+    p_load = sub.add_parser(
+        "load",
+        help="使用済み ID を取得(デフォルトは全期間。重複防止のため通常はこれを使う)",
+    )
+    p_load.add_argument(
+        "--hours-back",
+        type=int,
+        default=None,
+        help="この時間以内の ID に絞る。未指定なら全期間",
+    )
     p_load.add_argument("--history-dir", default="./.x-history")
 
-    p_clean = sub.add_parser("cleanup", help="古いエントリを削除")
-    p_clean.add_argument("--keep-hours", type=int, default=72)
+    p_clean = sub.add_parser(
+        "cleanup",
+        help="古いエントリを削除(任意)。通常は実行不要",
+    )
+    p_clean.add_argument("--keep-hours", type=int, default=8760)
     p_clean.add_argument("--history-dir", default="./.x-history")
 
     args = parser.parse_args()
