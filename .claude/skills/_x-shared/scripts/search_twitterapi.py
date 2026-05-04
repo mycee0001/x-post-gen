@@ -53,6 +53,7 @@ def _build_query(
     language: str = "ja",
     hours_back: int = 72,
     min_likes: int = 5,
+    exclude_replies: bool = False,
 ) -> str:
     """Advanced Search のクエリ文字列を組み立てる(X の検索構文)。"""
     since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).strftime("%Y-%m-%d")
@@ -63,6 +64,8 @@ def _build_query(
         parts.append(f"min_faves:{min_likes}")
     parts.append(f"since:{since}")
     parts.append("-is:retweet")
+    if exclude_replies:
+        parts.append("-filter:replies")
     return " ".join(p for p in parts if p)
 
 
@@ -171,6 +174,15 @@ def _normalize_tweet(t: dict[str, Any]) -> dict[str, Any] | None:
     )
     reply_count = _to_int(t.get("replyCount") or t.get("reply_count") or 0)
 
+    in_reply_to_id = (
+        t.get("inReplyToId")
+        or t.get("in_reply_to_status_id")
+        or t.get("inReplyToStatusId")
+        or t.get("in_reply_to_id")
+        or ""
+    )
+    in_reply_to_id = str(in_reply_to_id) if in_reply_to_id else ""
+
     url = f"https://x.com/{author_handle}/status/{tweet_id}" if author_handle else ""
 
     return {
@@ -186,6 +198,7 @@ def _normalize_tweet(t: dict[str, Any]) -> dict[str, Any] | None:
         "like_count": like_count,
         "repost_count": repost_count,
         "reply_count": reply_count,
+        "in_reply_to_id": in_reply_to_id,
     }
 
 
@@ -222,6 +235,7 @@ def search_tweets(
     min_author_followers: int = 0,
     max_replies: int | None = None,
     min_replies: int = 0,
+    exclude_replies: bool = False,
 ) -> list[dict[str, Any]]:
     """X 内ツイートを検索して共通スキーマに正規化して返す。
 
@@ -234,8 +248,17 @@ def search_tweets(
                      極端な炎上スレッドを除外したい場合に使う。
         min_replies: ツイートの返信数の最低値。0 ならフィルタなし。
                      活発な議論のみを対象にしたい場合に使う(Premium+ 返信ブースト最適化)。
+        exclude_replies: True なら他ポストへのリプライ(ツリーぶら下がり)を除外する。
+                         X 検索構文の `-filter:replies` を付与し、取得後に
+                         `in_reply_to_id` 非空のものも除外して二重チェックする。
     """
-    q = _build_query(query, language=language, hours_back=hours_back, min_likes=min_likes)
+    q = _build_query(
+        query,
+        language=language,
+        hours_back=hours_back,
+        min_likes=min_likes,
+        exclude_replies=exclude_replies,
+    )
     results: list[dict[str, Any]] = []
     cursor: str | None = None
     _exclude = exclude_ids or set()
@@ -260,6 +283,8 @@ def search_tweets(
             if max_replies is not None and norm["reply_count"] > max_replies:
                 continue
             if min_replies > 0 and norm["reply_count"] < min_replies:
+                continue
+            if exclude_replies and norm.get("in_reply_to_id"):
                 continue
             results.append(norm)
             if len(results) >= max_results:
@@ -341,6 +366,12 @@ def main() -> int:
         default=0,
         help="ツイートの返信数の最低値。活発な議論のみを対象にしたい場合に使う。0 ならフィルタなし",
     )
+    parser.add_argument(
+        "--exclude-replies",
+        action="store_true",
+        help="他ポストへのリプライ(ぶら下がりツイート)を除外する。"
+             "X 検索構文 -filter:replies を付与し、取得後に in_reply_to_id 非空のものも除外",
+    )
     args = parser.parse_args()
 
     exclude_ids: set[str] | None = None
@@ -361,6 +392,7 @@ def main() -> int:
             min_author_followers=args.min_author_followers,
             max_replies=args.max_replies,
             min_replies=args.min_replies,
+            exclude_replies=args.exclude_replies,
         )
     except TwitterAPIError as e:
         print(f"ERROR: {e}", file=sys.stderr)
